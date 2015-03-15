@@ -2,18 +2,6 @@ package kowhai
 
 import "fmt"
 
-//import "strings"
-
-//xpathLexer - generic-ish lexer with xpathTokens
-//parser - consume tokens until error or EOF
-//if input accepted, build parse tree
-//parse tree -> AST maybe?
-
-// EarleySet = []EarleyItem
-// EIM = {dottedRule, originLocation}
-// AH = {AHFAstate, originLocation}  AFHA is group of dotted rules; either predicted or confirmed
-// LIM = {topAH, SYMBOL, originLocation}
-
 // A term is anything that can appear on the RHS of a rule
 // Here we define Symbol (for literal terminals that appear in a rule definition),
 // Rule (for non-terminals), TypedTerm (for matching type of token produced by a lexer)
@@ -22,14 +10,13 @@ type Term interface {
 	MatchesToken(token Token) bool
 }
 
-//needs to expose a string value (for symbol match)
-//needs to expose a token type (for type match; ie, int literal)
+// A trivial interface for the tokens comsumed by the parser
 type Token interface {
-	AsValue() string
-	TokenType() int
+	AsValue() string //exposes a string value for symbol matches
+	TokenType() int  // exposes a token type for a type match
 }
 
-//adding a literal token type for testing
+// Simple token type that can be delivered to the parser
 type LiteralToken string
 
 func (l LiteralToken) AsValue() string {
@@ -37,245 +24,10 @@ func (l LiteralToken) AsValue() string {
 }
 
 func (l LiteralToken) TokenType() int {
-	if l.AsValue() == "1" {
-		return 1
-	}
 	return 0
 }
 
-//rule as fit for usage in the state machine
-type AhfaRule struct {
-	name     string     //name of the rule (LHS)
-	prod     Production // RHS
-	dotIndex int        // dot location
-	orig     *Rule
-}
-
-//convert to a term for convenience
-func (r *AhfaRule) AsTerm() Term {
-	return r.orig
-}
-
-func (rule *AhfaRule) String() string {
-	return fmt.Sprint(rule.name, rule.prod, rule.dotIndex)
-}
-
-func (rule *AhfaRule) nextTerm() Term {
-	if rule.IsCompleted() {
-		return nil
-	}
-	return rule.prod[rule.dotIndex]
-}
-
-func (rule *AhfaRule) IsCompleted() bool {
-	return rule.dotIndex >= len(rule.prod)
-}
-
-func (r *AhfaRule) derivesNull() bool {
-	return r.prod == nil
-}
-
-//group of dotted rules
-type AhfaState []*AhfaRule
-
-//check to see if a rule is present in a state
-func (state AhfaState) Contains(rule *AhfaRule) bool {
-	for _, r := range state {
-		if r.String() == rule.String() {
-			return true
-		}
-	}
-	return false
-}
-
-func (state AhfaState) transitions() (terms map[Term]int) {
-	terms = make(map[Term]int)
-	for j := 0; j < len(state); j++ {
-		rule := state[j]
-		term := rule.nextTerm()
-		if term == nil {
-			continue
-		}
-		terms[term] = -1
-	}
-	return terms
-}
-
-func (state AhfaState) advance(key Term) (newstate AhfaState) {
-	for j := 0; j < len(state); j++ {
-		rule := state[j]
-		term := rule.nextTerm()
-		if term == nil {
-			continue
-		}
-		if term == key {
-			newRule := &AhfaRule{rule.name, rule.prod, rule.dotIndex + 1, rule.orig}
-			if !state.Contains(newRule) {
-				newstate = append(newstate, newRule)
-			}
-		}
-	}
-	return
-}
-
-func (state AhfaState) closure() AhfaState {
-	//not using range as we can add more rules while iterating
-	for j := 0; j < len(state); j++ {
-		rule := state[j]
-		term := rule.nextTerm()
-		if term == nil {
-			continue
-		}
-		if term.IsRule() {
-			r := term.(*Rule)
-			for _, prod := range r.Productions {
-				newRule := &AhfaRule{r.name, prod, 0, r}
-				if !state.Contains(newRule) {
-					state = append(state, newRule)
-				}
-			}
-		}
-	}
-	return state
-}
-
-func (state AhfaState) split() (kernel AhfaState, nonkernel AhfaState) {
-	for _, rule := range state {
-		if rule.dotIndex == 0 && rule.name != "GAMMA" {
-			nonkernel = append(nonkernel, rule)
-		} else if rule.derivesNull() {
-			//see AH paper for details on rules that can derive null
-			//right now our derivesNull() check is primitive
-			nonkernel = append(nonkernel, rule)
-		} else {
-			kernel = append(kernel, rule)
-		}
-	}
-	return
-}
-
-//determine if two states are equal
-func (state AhfaState) isEqual(other AhfaState) bool {
-	if len(state) != len(other) {
-		return false
-	}
-	for _, r := range state {
-		if !other.Contains(r) {
-			return false
-		}
-	}
-	return true
-}
-
-// the state machine
-// TODO: transitions should be part of corresponding state
-type AhfaMachine struct {
-	states      []AhfaState
-	transitions map[int]map[Term]int
-}
-
-// given a start rule, build a state machine
-func buildStateMachine(start *Rule) (machine *AhfaMachine) {
-	machine = &AhfaMachine{}
-	machine.transitions = make(map[int]map[Term]int)
-
-	//add the start rule
-	rule0 := &AhfaRule{"GAMMA", Production{start}, 0, nil}
-	k0, nk0 := AhfaState{rule0}.closure().split()
-	machine.states = append(machine.states, k0)
-	if nk0 != nil {
-		machine.states = append(machine.states, nk0)
-		machine.transitions[0] = map[Term]int{nil: 1}
-	}
-
-	//not using range as we can add more states while iterating
-	for j := 0; j < len(machine.states); j++ {
-		state := machine.states[j]
-		if machine.transitions[j] == nil {
-			machine.transitions[j] = make(map[Term]int)
-		}
-		newTerms := state.transitions()
-		for key, _ := range newTerms {
-			// for each new term, work out the new state
-			newState := state.advance(key).closure()
-			//split into kernel and non-kernel states
-			k, nk := newState.split()
-			kIndex := machine.IndexOf(k)
-			if kIndex == -1 {
-				kIndex = len(machine.states)
-				machine.states = append(machine.states, k)
-			}
-			machine.transitions[j][key] = kIndex
-			if nk != nil {
-				//if we have a non-kernel state
-				newIndex := machine.IndexOf(nk)
-				if newIndex == -1 {
-					newIndex = len(machine.states)
-					machine.states = append(machine.states, nk)
-				}
-				//add a NIL transition from k -> nk
-				if machine.transitions[kIndex] == nil {
-					machine.transitions[kIndex] = make(map[Term]int)
-				}
-				machine.transitions[kIndex][nil] = newIndex
-			}
-		}
-	}
-	return
-}
-
-// used during building of machine to deduplicate states
-func (machine *AhfaMachine) IndexOf(state AhfaState) int {
-	for i, s := range machine.states {
-		if s.isEqual(state) {
-			return i
-		}
-	}
-	return -1
-}
-
-// transition to the next state
-func (machine *AhfaMachine) Goto(state int, symbol Term) int {
-	if state < 0 || state >= len(machine.transitions) {
-		return -1
-	}
-	t := machine.transitions[state]
-	dest, ok := t[symbol]
-	if !ok {
-		return -1
-	}
-	return dest
-}
-
-func (machine *AhfaMachine) String() string {
-	var output string
-	for i, state := range machine.states {
-		output += fmt.Sprint("State", i, state, "\n")
-		output += fmt.Sprint("     ", machine.transitions[i], "\n")
-	}
-	return output
-}
-
-func (ah *AhfaMachine) AcceptedState(state int) bool {
-	s := ah.states[state]
-	for _, rule := range s {
-		if rule.IsCompleted() {
-			return rule.name == "GAMMA"
-		}
-	}
-	return false
-}
-
-func (ah *AhfaMachine) Completed(state int) (rules []Term) {
-	s := ah.states[state]
-	for _, rule := range s {
-		if rule.IsCompleted() {
-			rules = append(rules, rule.AsTerm())
-		}
-	}
-	return rules
-}
-
+// this will hopefully become a SPPF node
 type AhfaCompletion struct {
 	start int
 	end   int
@@ -358,6 +110,7 @@ func (parser *MarpaParser) addEIM(i int, confirmedAH int, origin int) {
 	}
 }
 
+// this handles the next token delivered by the lexer
 func (parser *MarpaParser) ScanToken(token Token) (err error) {
 	col := len(parser.table)
 	set := &EarleyItemSet{col, token.AsValue(), nil, make(map[string]bool), make(map[Term][]EarleyItem)}
@@ -372,6 +125,7 @@ func (parser *MarpaParser) ScanToken(token Token) (err error) {
 	return
 }
 
+// create a new parser that uses the machine
 func CreateParser(machine *AhfaMachine) MarpaParser {
 	table := []*EarleyItemSet{}
 	table = append(table, &EarleyItemSet{0, "", nil, make(map[string]bool), make(map[Term][]EarleyItem)})
@@ -381,11 +135,15 @@ func CreateParser(machine *AhfaMachine) MarpaParser {
 	return parser
 }
 
+// dump the Earley sets for inspection
 func (parser *MarpaParser) DumpTable() {
 	fmt.Println(parser.table)
 }
 
+// placeholder function where we can look at the parse tree once we are building one!
 func (parser *MarpaParser) PrintAcceptedTree() bool {
+	// if the last Earley Set contains an accepted state
+	// we have valid input
 	final_set := parser.table[len(parser.table)-1]
 	for _, item := range final_set.items {
 		if item.parent == 0 {
@@ -408,8 +166,6 @@ func (parser *MarpaParser) PrintAcceptedTree() bool {
 			}
 		}
 	}
-	// if the last Earley Set contains an accepted state
-	// we have valid input
 	// otherwise we have an incomplete expression
 	//reject input
 	fmt.Println("===========")
@@ -470,6 +226,8 @@ func (parser *MarpaParser) scan_pass(location int, token Token) {
 	return
 }
 
+// for now simply record a rule completion
+// in future we should be building a tree
 func (parser *MarpaParser) recordCompletion(start, end int, term Term) {
 	c := AhfaCompletion{start, end, term}
 	parser.cnodes = append(parser.cnodes, c)
@@ -563,6 +321,7 @@ func (parser *MarpaParser) reduceOneLHS(location int, origin int, term Term) {
 
 }
 
+// must be some slice utils somewhere
 func inSlice(item EarleyItem, set []EarleyItem) bool {
 	for _, i := range set {
 		if i == item {
@@ -572,6 +331,7 @@ func inSlice(item EarleyItem, set []EarleyItem) bool {
 	return false
 }
 
+//perform a leo reduction per marpa paper
 func (parser *MarpaParser) leoReduce(location int, item EarleyItem) {
 	toAH := parser.machine.Goto(item.state, item.symbol)
 	if toAH > -1 {
@@ -580,6 +340,7 @@ func (parser *MarpaParser) leoReduce(location int, item EarleyItem) {
 	}
 }
 
+//perform an earley reduction per Marpa paper
 func (parser *MarpaParser) earleyReduce(location int, item EarleyItem, term Term) {
 	toAH := parser.machine.Goto(item.state, term)
 	if toAH > -1 {

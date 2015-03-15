@@ -150,7 +150,7 @@ func (r *Rule) IsRightRecursive() bool {
 //Production is the set of terms that make up the right side of a rule
 type Production []Term
 
-// Symbol looks at a token and matches in the value
+// Symbol looks at a token and matches the value
 // Generally used for keywords and punctuation referenced directly
 // in rule definitions.
 type Symbol string
