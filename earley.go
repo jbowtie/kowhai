@@ -166,17 +166,13 @@ func (parser *MarpaParser) DumpTable() {
 func (parser *MarpaParser) MakeParseNode(rule Term, origin int, location int, w *SppfNode, v *SppfNode, nodes map[string]*SppfNode) (y *SppfNode) {
 	s := rule
 	if origin == location {
+		return
+	}
+	if location == origin+1 {
 		y = v
 		return
 	}
-	/*if rule.dotIndex == 1 {
-		y = v
-		return
-	}*/
 	y = &SppfNode{origin, location, s, v, w}
-	if nodes == nil {
-		return
-	}
 	existing := nodes[y.Label()]
 	if existing == nil {
 		nodes[y.Label()] = y
@@ -262,6 +258,9 @@ func (parser *MarpaParser) scan_pass(location int, token Token, nodes map[string
 			h := item.parent
 			w := item.parseNode
 			y := parser.MakeParseNode(s, h, location, w, v, nodes)
+			fmt.Println("SCAN", y)
+			fmt.Println("    ", w)
+			fmt.Println("    ", v)
 			parser.addEIM(location, toAH, item.parent, y)
 		}
 	}
@@ -295,8 +294,7 @@ func (parser *MarpaParser) reduce_pass(location int, nodes map[string]*SppfNode)
 	for j := 0; j < len(eset.items); j++ {
 		item := eset.items[j]
 		for _, rule := range parser.machine.Completed(item.state) {
-			parser.reduceOneLHS(location, item.parent, rule, item)
-			parser.recordCompletion(item.parent, location, rule)
+			parser.reduceOneLHS(location, item.parent, rule, item, nodes)
 		}
 
 	}
@@ -344,7 +342,7 @@ func (parser *MarpaParser) memoize_transitions(location int) {
 	return
 }
 
-func (parser *MarpaParser) reduceOneLHS(location int, origin int, term Term, trigger EarleyItem) {
+func (parser *MarpaParser) reduceOneLHS(location int, origin int, term Term, trigger EarleyItem, nodes map[string]*SppfNode) {
 	//get all the postDOTs in this location
 	// is Eh in SPPF terms!
 	set := parser.table[origin]
@@ -362,16 +360,16 @@ func (parser *MarpaParser) reduceOneLHS(location int, origin int, term Term, tri
 	// loop through the postdots from the original location
 	for _, item := range postDOTs {
 		if item.symbol != nil {
-			//fmt.Println("Leo reduction for", term, origin, location)
+			fmt.Println("Leo reduction for", term, origin, location)
 			parser.leoReduce(location, item)
 		} else {
-			parser.earleyReduce(location, item, term, trigger)
+			parser.earleyReduce(location, item, term, trigger, nodes)
 		}
 	}
 
 	for _, item := range set.items {
 		if !inSlice(item, postDOTs) {
-			parser.earleyReduce(location, item, term, trigger)
+			parser.earleyReduce(location, item, term, trigger, nodes)
 		}
 	}
 
@@ -397,14 +395,14 @@ func (parser *MarpaParser) leoReduce(location int, item EarleyItem) {
 }
 
 //perform an earley reduction per Marpa paper
-func (parser *MarpaParser) earleyReduce(location int, item EarleyItem, term Term, trigger EarleyItem) {
+func (parser *MarpaParser) earleyReduce(location int, item EarleyItem, term Term, trigger EarleyItem, nodes map[string]*SppfNode) {
 	toAH := parser.machine.Goto(item.state, term)
 	if toAH > -1 {
 		k := item.parent
 		z := item.parseNode
 		w := trigger.parseNode
 		//v == term, location, location
-		y := parser.MakeParseNode(term, k, location, z, w, nil)
+		y := parser.MakeParseNode(term, k, location, z, w, nodes)
 		parser.addEIM(location, toAH, item.parent, y)
 	}
 }
