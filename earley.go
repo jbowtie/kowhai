@@ -45,8 +45,12 @@ type SppfNode struct {
 	right *SppfNode
 }
 
+func (s *SppfNode) Label() string {
+	return fmt.Sprintf("%v %v %v", s.rule, s.start, s.end)
+}
+
 func (s *SppfNode) String() string {
-	return fmt.Sprintf("%v, %v, %v", s.rule, s.start, s.end)
+	return fmt.Sprintf("<%v, %v, %v #%v #%v>", s.rule, s.start, s.end, s.left, s.right)
 }
 
 //type SppfNodeSet map[string]*SppfNode
@@ -96,14 +100,14 @@ func (set *EarleyItemSet) AddItem(state int, parent int, parseNode *SppfNode) {
 		return
 	}
 	set.ustates[hash] = true
-	set.items = append(set.items, EarleyItem{state, parent, nil, nil})
+	set.items = append(set.items, EarleyItem{state, parent, nil, parseNode})
 }
 
 func (item EarleyItem) String() string {
-	if item.symbol == nil {
+	if item.parseNode == nil {
 		return fmt.Sprint("{", item.state, " ", item.parent, "}")
 	}
-	return fmt.Sprint("{", item.state, " ", item.parent, " ", item.symbol, "}")
+	return fmt.Sprint("{", item.state, " ", item.parent, " ", item.parseNode, "}")
 }
 
 func (set *EarleyItemSet) String() string {
@@ -133,14 +137,14 @@ func (parser *MarpaParser) ScanToken(token Token) (err error) {
 	col := len(parser.table)
 	set := &EarleyItemSet{col, token.AsValue(), nil, make(map[string]bool), make(map[Term][]EarleyItem)}
 	parser.table = append(parser.table, set)
-	//nodes := make(map[string]*SppfNode)
-	parser.scan_pass(col, token)
+	nodes := make(map[string]*SppfNode)
+	parser.scan_pass(col, token, nodes)
 	// if there are no items after the scan pass,
 	// there's a syntax error!
 	if set.items == nil {
 		return fmt.Errorf("SYNTAX ERROR: %s at position %d", set.token, col)
 	}
-	parser.reduce_pass(col)
+	parser.reduce_pass(col, nodes)
 	return
 }
 
@@ -161,6 +165,10 @@ func (parser *MarpaParser) DumpTable() {
 
 func (parser *MarpaParser) MakeParseNode(rule Term, origin int, location int, w *SppfNode, v *SppfNode, nodes map[string]*SppfNode) (y *SppfNode) {
 	s := rule
+	if origin == location {
+		y = v
+		return
+	}
 	/*if rule.dotIndex == 1 {
 		y = v
 		return
@@ -169,9 +177,9 @@ func (parser *MarpaParser) MakeParseNode(rule Term, origin int, location int, w 
 	if nodes == nil {
 		return
 	}
-	existing := nodes[y.String()]
+	existing := nodes[y.Label()]
 	if existing == nil {
-		nodes[y.String()] = y
+		nodes[y.Label()] = y
 	} else {
 		y = existing
 	}
@@ -186,7 +194,7 @@ func (parser *MarpaParser) PrintAcceptedTree() bool {
 	for _, item := range final_set.items {
 		if item.parent == 0 {
 			if parser.machine.AcceptedState(item.state) {
-				parser.DumpTable()
+				//parser.DumpTable()
 				fmt.Println("===========")
 				dumpTree(item.parseNode, 0)
 				//sort.Sort(parser.cnodes)
@@ -234,11 +242,12 @@ func dumpTree(parseNode *SppfNode, depth int) {
 // initialize the parser
 func (parser *MarpaParser) initial() {
 	parser.addEIM(0, 0, 0, nil)
-	parser.reduce_pass(0)
+	nodes := make(map[string]*SppfNode)
+	parser.reduce_pass(0, nodes)
 	return
 }
 
-func (parser *MarpaParser) scan_pass(location int, token Token) {
+func (parser *MarpaParser) scan_pass(location int, token Token, nodes map[string]*SppfNode) {
 	if location == 0 {
 		return
 	}
@@ -252,7 +261,7 @@ func (parser *MarpaParser) scan_pass(location int, token Token) {
 		if toAH > -1 {
 			h := item.parent
 			w := item.parseNode
-			y := parser.MakeParseNode(s, h, location, w, v, nil)
+			y := parser.MakeParseNode(s, h, location, w, v, nodes)
 			parser.addEIM(location, toAH, item.parent, y)
 		}
 	}
@@ -263,7 +272,10 @@ func (parser *MarpaParser) scan_pass(location int, token Token) {
 	for _, item := range set {
 		toAH := parser.machine.Goto(item.state, t)
 		if toAH > -1 {
-			parser.addEIM(location, toAH, item.parent, nil)
+			h := item.parent
+			w := item.parseNode
+			y := parser.MakeParseNode(s, h, location, w, v, nodes)
+			parser.addEIM(location, toAH, item.parent, y)
 		}
 	}
 
@@ -277,13 +289,13 @@ func (parser *MarpaParser) recordCompletion(start, end int, term Term) {
 	parser.cnodes = append(parser.cnodes, c)
 }
 
-func (parser *MarpaParser) reduce_pass(location int) {
+func (parser *MarpaParser) reduce_pass(location int, nodes map[string]*SppfNode) {
 	eset := parser.table[location]
 	//for each EIM in location table
 	for j := 0; j < len(eset.items); j++ {
 		item := eset.items[j]
 		for _, rule := range parser.machine.Completed(item.state) {
-			parser.reduceOneLHS(location, item.parent, rule)
+			parser.reduceOneLHS(location, item.parent, rule, item)
 			parser.recordCompletion(item.parent, location, rule)
 		}
 
@@ -332,9 +344,9 @@ func (parser *MarpaParser) memoize_transitions(location int) {
 	return
 }
 
-func (parser *MarpaParser) reduceOneLHS(location int, origin int, term Term) {
+func (parser *MarpaParser) reduceOneLHS(location int, origin int, term Term, trigger EarleyItem) {
 	//get all the postDOTs in this location
-	// in future, lookup transition table for this term
+	// is Eh in SPPF terms!
 	set := parser.table[origin]
 	postDOTs := set.transitions[term]
 
@@ -353,13 +365,13 @@ func (parser *MarpaParser) reduceOneLHS(location int, origin int, term Term) {
 			//fmt.Println("Leo reduction for", term, origin, location)
 			parser.leoReduce(location, item)
 		} else {
-			parser.earleyReduce(location, item, term)
+			parser.earleyReduce(location, item, term, trigger)
 		}
 	}
 
 	for _, item := range set.items {
 		if !inSlice(item, postDOTs) {
-			parser.earleyReduce(location, item, term)
+			parser.earleyReduce(location, item, term, trigger)
 		}
 	}
 
@@ -385,10 +397,15 @@ func (parser *MarpaParser) leoReduce(location int, item EarleyItem) {
 }
 
 //perform an earley reduction per Marpa paper
-func (parser *MarpaParser) earleyReduce(location int, item EarleyItem, term Term) {
+func (parser *MarpaParser) earleyReduce(location int, item EarleyItem, term Term, trigger EarleyItem) {
 	toAH := parser.machine.Goto(item.state, term)
 	if toAH > -1 {
-		parser.addEIM(location, toAH, item.parent, nil)
+		k := item.parent
+		z := item.parseNode
+		w := trigger.parseNode
+		//v == term, location, location
+		y := parser.MakeParseNode(term, k, location, z, w, nil)
+		parser.addEIM(location, toAH, item.parent, y)
 	}
 }
 
