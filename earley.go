@@ -186,8 +186,8 @@ func (parser *MarpaParser) PrintAcceptedTree() bool {
 	for _, item := range final_set.items {
 		if item.parent == 0 {
 			if parser.machine.AcceptedState(item.state) {
+				parser.DumpTable()
 				fmt.Println("===========")
-				//parser.DumpTable()
 				dumpTree(item.parseNode, 0)
 				//sort.Sort(parser.cnodes)
 				//for _, node := range parser.cnodes {
