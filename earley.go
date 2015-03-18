@@ -165,9 +165,9 @@ func (parser *MarpaParser) DumpTable() {
 
 func (parser *MarpaParser) MakeParseNode(rule Term, origin int, location int, w *SppfNode, v *SppfNode, nodes map[string]*SppfNode) (y *SppfNode) {
 	s := rule
-	if origin == location {
+	/*if origin == location {
 		return
-	}
+	}*/
 	if location == origin+1 {
 		y = v
 		return
@@ -403,6 +403,9 @@ func (parser *MarpaParser) earleyReduce(location int, item EarleyItem, term Term
 		w := trigger.parseNode
 		//v == term, location, location
 		y := parser.MakeParseNode(term, k, location, z, w, nodes)
+		fmt.Println("REDUCE", y)
+		fmt.Println("      ", w)
+		fmt.Println("      ", z)
 		parser.addEIM(location, toAH, item.parent, y)
 	}
 }
