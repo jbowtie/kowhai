@@ -147,6 +147,19 @@ func (r *Rule) IsRightRecursive() bool {
 	return false
 }
 
+// this is used when building parse trees to
+// prune out alternative shorter parse possibilities
+func (r *Rule) IsAllowedChild(term Term) bool {
+	for _, prod := range r.Productions {
+		for _, t := range prod {
+			if t == term {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 //Production is the set of terms that make up the right side of a rule
 type Production []Term
 

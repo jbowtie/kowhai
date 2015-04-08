@@ -239,18 +239,36 @@ func (parser *MarpaParser) buildTree() *ParseTreeNode {
 			continue
 		}
 		for curr != nil {
+			//might be a parent
 			if tn.start >= curr.start && tn.end <= curr.end {
-				tn.parent = curr
-				curr.children = append([]*ParseTreeNode{tn}, curr.children...)
+				//assume we can always add an actual token as a child
+				_, isToken := tn.Term.(*ParseTreeToken)
+				if !isToken && curr.Term.IsRule() {
+					r := curr.Term.(*Rule)
+					//check that this is a valid child
+					//if not it's the result of an incomplete
+					// (parallel, most likely) parse tree
+					if r != nil {
+						if !r.IsAllowedChild(n.term) {
+							tn = nil
+							break
+						}
+					}
+				}
+				tn.Parent = curr
+				curr.Children = append([]*ParseTreeNode{tn}, curr.Children...)
 				break
-			} else {
-				curr = curr.parent
 			}
+			curr = curr.Parent
 		}
-		curr = tn
+		//we may have decided to drop the node
+		//in which case we keep looking for a valid child
+		if tn != nil {
+			curr = tn
+		}
 	}
 	//top should be GAMMA node so expect actual top node as only child
-	return top.children[0]
+	return top.Children[0]
 }
 
 // placeholder function where we can look at the parse tree once we are building one!
@@ -278,12 +296,26 @@ func (parser *MarpaParser) PrintAcceptedTree() bool {
 	return false
 }
 
+type ParseTreeToken struct {
+	Token Token
+}
+
+func (t *ParseTreeToken) String() string {
+	return fmt.Sprintf("TOKEN( %v )", t.Token.AsValue())
+}
+func (t *ParseTreeToken) IsRule() bool {
+	return false
+}
+func (t *ParseTreeToken) MatchesToken(token Token) bool {
+	return token == t.Token
+}
+
 type ParseTreeNode struct {
 	start    int
 	end      int
-	term     Term
-	parent   *ParseTreeNode
-	children []*ParseTreeNode
+	Term     Term
+	Parent   *ParseTreeNode
+	Children []*ParseTreeNode
 }
 
 func (parser *MarpaParser) PrintCNodes() {
@@ -300,9 +332,9 @@ func DumpTreeNode(parseNode *ParseTreeNode, depth int) {
 		fmt.Println("<nil>")
 		return
 	}
-	fmt.Println(parseNode.start, parseNode.end, parseNode.term)
-	if parseNode.children != nil {
-		for _, n := range parseNode.children {
+	fmt.Println(parseNode.start, parseNode.end, parseNode.Term)
+	if parseNode.Children != nil {
+		for _, n := range parseNode.Children {
 			DumpTreeNode(n, depth+1)
 		}
 	}
@@ -342,7 +374,7 @@ func (parser *MarpaParser) scan_pass(location int, token Token, nodes map[string
 	v := &SppfNode{location - 1, location, s, nil, nil}
 	//record the symbol itself in the completions list
 	//helps build a parse tree later
-	parser.recordCompletion(location-1, location, s)
+	parser.recordCompletion(location-1, location, &ParseTreeToken{token})
 
 	// lookup by symbol
 	set := parser.table[location-1].transitions[s]
