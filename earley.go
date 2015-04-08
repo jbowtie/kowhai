@@ -27,13 +27,26 @@ func (l LiteralToken) TokenType() int {
 	return 0
 }
 
+// Used only in building the parse tree
+// will need to refactor away later
+type SppfTerm string
+
+func (l SppfTerm) String() string {
+	return fmt.Sprintf("_%v_", string(l))
+}
+
+func (l SppfTerm) IsRule() bool {
+	return false
+}
+func (l SppfTerm) MatchesToken(token Token) bool {
+	return false
+}
+
 // this will hopefully become a SPPF node
 type AhfaCompletion struct {
 	start int
 	end   int
 	term  Term
-	left  *AhfaCompletion
-	right *AhfaCompletion
 }
 
 type SppfNode struct {
@@ -50,7 +63,13 @@ func (s *SppfNode) Label() string {
 }
 
 func (s *SppfNode) String() string {
-	return fmt.Sprintf("<%v, %v, %v #%v #%v>", s.rule, s.start, s.end, s.left, s.right)
+	if s.right == nil && s.left == nil {
+		return fmt.Sprintf("<%v, %v, %v>", s.rule, s.start, s.end)
+	}
+	if s.right == nil {
+		return fmt.Sprintf("<%v, %v, %v left(%v)>", s.rule, s.start, s.end, s.left)
+	}
+	return fmt.Sprintf("<%v, %v, %v left(%v) right(%v)>", s.rule, s.start, s.end, s.left, s.right)
 }
 
 //type SppfNodeSet map[string]*SppfNode
@@ -105,9 +124,9 @@ func (set *EarleyItemSet) AddItem(state int, parent int, parseNode *SppfNode) {
 
 func (item EarleyItem) String() string {
 	if item.parseNode == nil {
-		return fmt.Sprint("{", item.state, " ", item.parent, "}")
+		return fmt.Sprint("{State ", item.state, " Parent ", item.parent, "}")
 	}
-	return fmt.Sprint("{", item.state, " ", item.parent, " ", item.parseNode, "}")
+	return fmt.Sprint("{State ", item.state, " Parent ", item.parent, " Node ", item.parseNode, "}")
 }
 
 func (set *EarleyItemSet) String() string {
@@ -159,6 +178,11 @@ func CreateParser(machine *AhfaMachine) MarpaParser {
 }
 
 // dump the Earley sets for inspection
+func (parser *MarpaParser) DumpMachine() {
+	fmt.Println(parser.machine)
+}
+
+// dump the Earley sets for inspection
 func (parser *MarpaParser) DumpTable() {
 	fmt.Println(parser.table)
 }
@@ -172,7 +196,7 @@ func (parser *MarpaParser) MakeParseNode(rule Term, origin int, location int, w 
 		y = v
 		return
 	}
-	y = &SppfNode{origin, location, s, v, w}
+	y = &SppfNode{origin, location, s, w, v}
 	existing := nodes[y.Label()]
 	if existing == nil {
 		nodes[y.Label()] = y
@@ -190,20 +214,10 @@ func (parser *MarpaParser) PrintAcceptedTree() bool {
 	for _, item := range final_set.items {
 		if item.parent == 0 {
 			if parser.machine.AcceptedState(item.state) {
-				//parser.DumpTable()
 				fmt.Println("===========")
-				dumpTree(item.parseNode, 0)
-				//sort.Sort(parser.cnodes)
-				//for _, node := range parser.cnodes {
-				//	if node.end > node.start {
-				//		fmt.Println(node.start, node.end, node.term) //, tokens[node.start:node.end])
-				//	}
-				/*if node.end-node.start == 1 {
-					fmt.Println("\t", tokens[node.start])
-				}*/
-				//}
+				parser.PrintCNodes()
+				//dumpTree(item.parseNode, 0)
 				fmt.Println("===========")
-				//build parse tree
 				return true
 			}
 		}
@@ -215,6 +229,57 @@ func (parser *MarpaParser) PrintAcceptedTree() bool {
 	parser.DumpTable()
 	fmt.Println("===========")
 	return false
+}
+
+type ParseTreeNode struct {
+	start    int
+	end      int
+	term     Term
+	parent   *ParseTreeNode
+	children []*ParseTreeNode
+}
+
+func (parser *MarpaParser) PrintCNodes() {
+	var top *ParseTreeNode
+	var curr *ParseTreeNode
+	for i := len(parser.cnodes); i > 0; i-- {
+		n := parser.cnodes[i-1]
+		tn := &ParseTreeNode{n.start, n.end, n.term, nil, nil}
+		//init top if needed
+		if top == nil {
+			top = tn
+			curr = tn
+			continue
+		}
+		for curr != nil {
+			if tn.start >= curr.start && tn.end <= curr.end {
+				tn.parent = curr
+				curr.children = append([]*ParseTreeNode{tn}, curr.children...)
+				break
+			} else {
+				curr = curr.parent
+			}
+		}
+		curr = tn
+	}
+	dumpTreeNode(top, 0)
+}
+
+func dumpTreeNode(parseNode *ParseTreeNode, depth int) {
+	if depth > 0 {
+		fmts := fmt.Sprintf("%%%ds", depth*2)
+		fmt.Printf(fmts, " ")
+	}
+	if parseNode == nil {
+		fmt.Println("<nil>")
+		return
+	}
+	fmt.Println(parseNode.start, parseNode.end, parseNode.term)
+	if parseNode.children != nil {
+		for _, n := range parseNode.children {
+			dumpTreeNode(n, depth+1)
+		}
+	}
 }
 
 func dumpTree(parseNode *SppfNode, depth int) {
@@ -249,6 +314,9 @@ func (parser *MarpaParser) scan_pass(location int, token Token, nodes map[string
 	}
 	s := Symbol(token.AsValue())
 	v := &SppfNode{location - 1, location, s, nil, nil}
+	//record the symbol itself in the completions list
+	//helps build a parse tree later
+	parser.recordCompletion(location-1, location, s)
 
 	// lookup by symbol
 	set := parser.table[location-1].transitions[s]
@@ -257,10 +325,11 @@ func (parser *MarpaParser) scan_pass(location int, token Token, nodes map[string
 		if toAH > -1 {
 			h := item.parent
 			w := item.parseNode
-			y := parser.MakeParseNode(s, h, location, w, v, nodes)
-			fmt.Println("SCAN", y)
-			fmt.Println("    ", w)
-			fmt.Println("    ", v)
+			lbl := fmt.Sprintf("%v-%v-%v", h, s, location)
+			y := parser.MakeParseNode(SppfTerm(lbl), h, location, w, v, nodes)
+			//fmt.Println("SCAN", y)
+			//fmt.Println("    ", w)
+			//fmt.Println("    ", v)
 			parser.addEIM(location, toAH, item.parent, y)
 		}
 	}
@@ -284,7 +353,7 @@ func (parser *MarpaParser) scan_pass(location int, token Token, nodes map[string
 // for now simply record a rule completion
 // in future we should be building a tree
 func (parser *MarpaParser) recordCompletion(start, end int, term Term) {
-	c := AhfaCompletion{start, end, term, nil, nil}
+	c := AhfaCompletion{start, end, term}
 	parser.cnodes = append(parser.cnodes, c)
 }
 
@@ -356,11 +425,14 @@ func (parser *MarpaParser) reduceOneLHS(location int, origin int, term Term, tri
 	}*/
 
 	//fmt.Println("COMPLETE", term, "STARTS", origin, "ENDS", location)
+	if origin != location {
+		parser.recordCompletion(origin, location, term)
+	}
 
 	// loop through the postdots from the original location
 	for _, item := range postDOTs {
 		if item.symbol != nil {
-			fmt.Println("Leo reduction for", term, origin, location)
+			//fmt.Println("Leo reduction for", term, origin, location)
 			parser.leoReduce(location, item)
 		} else {
 			parser.earleyReduce(location, item, term, trigger, nodes)
@@ -401,11 +473,14 @@ func (parser *MarpaParser) earleyReduce(location int, item EarleyItem, term Term
 		k := item.parent
 		z := item.parseNode
 		w := trigger.parseNode
-		//v == term, location, location
 		y := parser.MakeParseNode(term, k, location, z, w, nodes)
-		fmt.Println("REDUCE", y)
-		fmt.Println("      ", w)
-		fmt.Println("      ", z)
+		/*fmt.Println("REDUCE", y)
+		if y != w {
+			fmt.Println("w     ", w)
+		}
+		if y != z {
+			fmt.Println("z     ", z)
+		}*/
 		parser.addEIM(location, toAH, item.parent, y)
 	}
 }
