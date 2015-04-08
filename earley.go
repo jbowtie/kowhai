@@ -206,6 +206,53 @@ func (parser *MarpaParser) MakeParseNode(rule Term, origin int, location int, w 
 	return
 }
 
+func (parser *MarpaParser) BuildParseTree() *ParseTreeNode {
+	// if the last Earley Set contains an accepted state
+	// we have valid input
+	final_set := parser.table[len(parser.table)-1]
+	for _, item := range final_set.items {
+		if item.parent == 0 {
+			if parser.machine.AcceptedState(item.state) {
+				return parser.buildTree()
+			}
+		}
+	}
+	// otherwise we have an incomplete expression
+	//reject input
+	fmt.Println("===========")
+	fmt.Println("ERROR: INCOMPLETE EXPRESSION")
+	parser.DumpTable()
+	fmt.Println("===========")
+	return nil
+}
+
+func (parser *MarpaParser) buildTree() *ParseTreeNode {
+	var top *ParseTreeNode
+	var curr *ParseTreeNode
+	for i := len(parser.cnodes); i > 0; i-- {
+		n := parser.cnodes[i-1]
+		tn := &ParseTreeNode{n.start, n.end, n.term, nil, nil}
+		//init top if needed
+		if top == nil {
+			top = tn
+			curr = tn
+			continue
+		}
+		for curr != nil {
+			if tn.start >= curr.start && tn.end <= curr.end {
+				tn.parent = curr
+				curr.children = append([]*ParseTreeNode{tn}, curr.children...)
+				break
+			} else {
+				curr = curr.parent
+			}
+		}
+		curr = tn
+	}
+	//top should be GAMMA node so expect actual top node as only child
+	return top.children[0]
+}
+
 // placeholder function where we can look at the parse tree once we are building one!
 func (parser *MarpaParser) PrintAcceptedTree() bool {
 	// if the last Earley Set contains an accepted state
@@ -240,32 +287,11 @@ type ParseTreeNode struct {
 }
 
 func (parser *MarpaParser) PrintCNodes() {
-	var top *ParseTreeNode
-	var curr *ParseTreeNode
-	for i := len(parser.cnodes); i > 0; i-- {
-		n := parser.cnodes[i-1]
-		tn := &ParseTreeNode{n.start, n.end, n.term, nil, nil}
-		//init top if needed
-		if top == nil {
-			top = tn
-			curr = tn
-			continue
-		}
-		for curr != nil {
-			if tn.start >= curr.start && tn.end <= curr.end {
-				tn.parent = curr
-				curr.children = append([]*ParseTreeNode{tn}, curr.children...)
-				break
-			} else {
-				curr = curr.parent
-			}
-		}
-		curr = tn
-	}
-	dumpTreeNode(top, 0)
+	top := parser.BuildParseTree()
+	DumpTreeNode(top, 0)
 }
 
-func dumpTreeNode(parseNode *ParseTreeNode, depth int) {
+func DumpTreeNode(parseNode *ParseTreeNode, depth int) {
 	if depth > 0 {
 		fmts := fmt.Sprintf("%%%ds", depth*2)
 		fmt.Printf(fmts, " ")
@@ -277,7 +303,7 @@ func dumpTreeNode(parseNode *ParseTreeNode, depth int) {
 	fmt.Println(parseNode.start, parseNode.end, parseNode.term)
 	if parseNode.children != nil {
 		for _, n := range parseNode.children {
-			dumpTreeNode(n, depth+1)
+			DumpTreeNode(n, depth+1)
 		}
 	}
 }
