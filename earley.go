@@ -134,9 +134,10 @@ func (set *EarleyItemSet) String() string {
 }
 
 type MarpaParser struct {
-	machine *AhfaMachine
-	table   []*EarleyItemSet
-	cnodes  ParseNodes
+	machine    *AhfaMachine
+	table      []*EarleyItemSet
+	cnodes     ParseNodes
+	optimizers []ParseTreeOptimizer
 }
 
 // adds an Earley item for the confirmed state,
@@ -172,9 +173,13 @@ func CreateParser(machine *AhfaMachine) MarpaParser {
 	table := []*EarleyItemSet{}
 	table = append(table, &EarleyItemSet{0, "", nil, make(map[string]bool), make(map[Term][]EarleyItem)})
 
-	parser := MarpaParser{machine, table, nil}
+	parser := MarpaParser{machine, table, nil, nil}
 	parser.initial()
 	return parser
+}
+
+func (parser *MarpaParser) AddOptimization(o ParseTreeOptimizer) {
+	parser.optimizers = append(parser.optimizers, o)
 }
 
 // dump the Earley sets for inspection
@@ -213,7 +218,8 @@ func (parser *MarpaParser) BuildParseTree() *ParseTreeNode {
 	for _, item := range final_set.items {
 		if item.parent == 0 {
 			if parser.machine.AcceptedState(item.state) {
-				return parser.buildTree()
+				tree := parser.buildTree()
+				return parser.OptimizeParseTree(tree)
 			}
 		}
 	}
@@ -271,6 +277,32 @@ func (parser *MarpaParser) buildTree() *ParseTreeNode {
 	return top.Children[0]
 }
 
+// run any optimizations over the tree
+func (parser *MarpaParser) OptimizeParseTree(tree *ParseTreeNode) *ParseTreeNode {
+	curr := tree
+	for _, opt := range parser.optimizers {
+		curr = processNode(opt, curr)
+	}
+	return curr
+}
+
+func processNode(o ParseTreeOptimizer, node *ParseTreeNode) *ParseTreeNode {
+	//preprocess first...
+	n := o.Preprocess(node)
+	var children []*ParseTreeNode
+	for _, c := range n.Children {
+		newchild := processNode(o, c)
+		if newchild != nil {
+			children = append(children, newchild)
+		}
+	}
+	//some of the child nodes may have been replaced
+	n.Children = children
+
+	//return the results of postprocessing
+	return o.Postprocess(n)
+}
+
 // placeholder function where we can look at the parse tree once we are building one!
 func (parser *MarpaParser) PrintAcceptedTree() bool {
 	// if the last Earley Set contains an accepted state
@@ -316,11 +348,6 @@ type ParseTreeNode struct {
 	Term     Term
 	Parent   *ParseTreeNode
 	Children []*ParseTreeNode
-}
-
-type ParseTreeOptimizer interface {
-	Preprocess(node *ParseTreeNode) *ParseTreeNode
-	Postprocess(node *ParseTreeNode) *ParseTreeNode
 }
 
 func (node *ParseTreeNode) Overlaps(other *ParseTreeNode) bool {
