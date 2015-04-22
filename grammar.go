@@ -12,6 +12,9 @@ type Grammar struct {
 	start *Rule
 }
 
+// this creates a rule OR adds a production to a new rule
+// this is a convenience behaviour since it can make it much
+// easier to transcribe EBNF
 func (g *Grammar) CreateRule(name string, terms ...Term) {
 	rule := g.Lookup(name)
 	prod := Production{}
@@ -70,12 +73,15 @@ func (g *Grammar) Or(terms ...Term) (out Term) {
 	return rule
 }
 
-// Create a TypedTerm
+// Create a TypedTerm (which matches on token type)
 func (g *Grammar) Type(tokenType int) (out Term) {
 	return TypedTerm(tokenType)
 }
 
 // Lookup a rule
+// this creates the rule if it doesn't exist
+// (makes forward declarations possible)
+// TODO: validate all rules have productions at build time
 func (g *Grammar) Lookup(name string) (out *Rule) {
 	rule, ok := g.rules[name]
 	if !ok {
@@ -85,6 +91,7 @@ func (g *Grammar) Lookup(name string) (out *Rule) {
 	return rule
 }
 
+// Create a symbol (which matches a token value)
 func (g *Grammar) Symbol(name string) Term {
 	return Symbol(name)
 }
@@ -100,6 +107,7 @@ func (g *Grammar) DumpRules() {
 	}
 }
 
+// the machine can be used by many parses
 func (g *Grammar) BuildStateMachine() *AhfaMachine {
 	return buildStateMachine(g.start)
 }

@@ -318,6 +318,18 @@ type ParseTreeNode struct {
 	Children []*ParseTreeNode
 }
 
+type ParseTreeOptimizer interface {
+	Preprocess(node *ParseTreeNode) *ParseTreeNode
+	Postprocess(node *ParseTreeNode) *ParseTreeNode
+}
+
+func (node *ParseTreeNode) Overlaps(other *ParseTreeNode) bool {
+	if node.start == other.start {
+		return true
+	}
+	return false
+}
+
 func (parser *MarpaParser) PrintCNodes() {
 	top := parser.BuildParseTree()
 	DumpTreeNode(top, 0)
