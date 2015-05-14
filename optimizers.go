@@ -1,5 +1,7 @@
 package kowhai
 
+import "strings"
+
 type ParseTreeOptimizer interface {
 	Preprocess(node *ParseTreeNode) *ParseTreeNode
 	Postprocess(node *ParseTreeNode) *ParseTreeNode
@@ -26,10 +28,47 @@ func (o TrimWhenSingle) Postprocess(node *ParseTreeNode) *ParseTreeNode {
 		}
 		for _, a := range o.AppliesTo {
 			if a == r.String() {
+				node.Children[0].Parent = node.Parent
 				return node.Children[0]
 			}
 		}
 	}
+
+	return node
+}
+
+type RemoveSyntheticNodes struct {
+}
+
+func (o RemoveSyntheticNodes) Preprocess(node *ParseTreeNode) *ParseTreeNode {
+	return node
+}
+
+func (o RemoveSyntheticNodes) Postprocess(node *ParseTreeNode) *ParseTreeNode {
+	if len(node.Children) == 0 {
+		return node
+	}
+
+	var children []*ParseTreeNode
+	for _, c := range node.Children {
+		if c.Term.IsRule() {
+			r := c.Term.(*Rule)
+			if r == nil {
+				children = append(children, c)
+				continue
+			}
+			if strings.HasPrefix(r.name, "OR_") || strings.HasPrefix(r.name, "STAR_") || strings.HasPrefix(r.name, "OPT_") {
+				for _, rp := range c.Children {
+					rp.Parent = node
+				}
+				// TODO: recurse
+				children = append(children, c.Children...)
+				continue
+			}
+		}
+		children = append(children, c)
+	}
+	node.Children = children
 
 	return node
 }
