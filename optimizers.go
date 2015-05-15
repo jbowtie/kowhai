@@ -37,6 +37,8 @@ func (o TrimWhenSingle) Postprocess(node *ParseTreeNode) *ParseTreeNode {
 	return node
 }
 
+// The optimization removes parse nodes thar derive from rules
+// that were created by the grammar operators (+, ?, *, |)
 type RemoveSyntheticNodes struct {
 }
 
@@ -49,7 +51,12 @@ func (o RemoveSyntheticNodes) Postprocess(node *ParseTreeNode) *ParseTreeNode {
 		return node
 	}
 
-	var children []*ParseTreeNode
+	node.Children = o.GetNaturalChildren(node)
+
+	return node
+}
+
+func (o RemoveSyntheticNodes) GetNaturalChildren(node *ParseTreeNode) (children []*ParseTreeNode) {
 	for _, c := range node.Children {
 		if c.Term.IsRule() {
 			r := c.Term.(*Rule)
@@ -57,20 +64,17 @@ func (o RemoveSyntheticNodes) Postprocess(node *ParseTreeNode) *ParseTreeNode {
 				children = append(children, c)
 				continue
 			}
-			if strings.HasPrefix(r.name, "OR_") || strings.HasPrefix(r.name, "STAR_") || strings.HasPrefix(r.name, "OPT_") {
+			if strings.HasPrefix(r.name, "OR_") || strings.HasPrefix(r.name, "STAR_") || strings.HasPrefix(r.name, "OPT_") || strings.HasPrefix(r.name, "PLUS_") {
 				for _, rp := range c.Children {
 					rp.Parent = node
 				}
-				// TODO: recurse
-				children = append(children, c.Children...)
+				children = append(children, o.GetNaturalChildren(c)...)
 				continue
 			}
 		}
 		children = append(children, c)
 	}
-	node.Children = children
-
-	return node
+	return
 }
 
 // This optimization handles child nodes that overlap (due to partial parse trees)
